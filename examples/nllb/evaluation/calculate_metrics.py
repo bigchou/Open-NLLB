@@ -16,7 +16,135 @@ import tqdm
 from joblib import Parallel, delayed
 
 from examples.nllb.evaluation.tokenizers import tokenize
-from examples.nllb.modeling.evaluation.generate_multi import get_averages
+from examples.nllb.modeling.evaluation.generate_multi import get_averages, get_type
+
+"""
+len(score_dict) = 40602
+score_dict['zul_Latn-zho_Hant'] = 9.3
+score_dict['zul_Latn-zho_Hans'] = 18.5
+score_dict['zul_Latn-yue_Hant'] = 11.2
+...
+score_dict['kam_Latn-zho_Hant'] = 5.0
+score_dict['kam_Latn-zho_Hans'] = 9.7
+score_dict['kam_Latn-yue_Hant'] = 6.1
+...
+
+get_averages(score_dict)
+
+# {'en-xx': defaultdict(<class 'int'>, {'all': 27.1, 'high': 38.27, 'low': 23.1, 'v_low': 21.29})
+
+# 輸入語言英文，取平均
+en_xx = []
+for pair, score in score_dict.items():
+    if pair.startswith("eng_Latn-"):
+        en_xx.append(score)
+sum(en_xx)/len(en_xx) = 27.1
+
+# 目標語言英文，取平均
+xx_en = []
+for pair, score in score_dict.items():
+    if pair.endswith("-eng_Latn"):
+        xx_en.append(score)
+sum(xx_en)/len(xx_en) = 38.0
+
+# 兩邊都不是英文，取平均
+non_eng = []
+for pair, score in score_dict.items():
+    if not (pair.startswith("eng_Latn-") or pair.endswith("-eng_Latn")):
+        non_eng.append(score)
+sum(non_eng)/len(non_eng) = 17.3
+
+# 所有語言取平均
+all_pairs = [score for pair, score in score_dict.items()]
+sum(all_pairs)/len(all_pairs) = 17.5
+
+
+def get_averages(scores_map, threshold=0):
+    en_xx = defaultdict(list)
+    xx_en = defaultdict(list)
+    non_eng = defaultdict(list)
+    all_pairs = defaultdict(list)
+    for pair, score in scores_map.items():
+        resource, vlow_res = get_type(pair)
+        if score < threshold:
+            print(f"{pair} {score} is skipped due to threshold")
+            continue
+        if resource is None:
+            print(f"{pair} {score} is skipped due to missing resource level")
+            continue
+        all_pairs["all"].append(score)
+        all_pairs[resource].append(score)
+        if vlow_res is not None:
+            all_pairs[vlow_res].append(score)
+
+        if pair.startswith("eng_Latn-"):  # 英文 → 其他語言
+            en_xx[resource].append(score)
+            if vlow_res is not None:
+                en_xx[vlow_res].append(score)
+            en_xx["all"].append(score)
+        elif pair.endswith("-eng_Latn"):  # 其他語言 → 英文
+            xx_en[resource].append(score)
+            if vlow_res is not None:
+                xx_en[vlow_res].append(score)
+            xx_en["all"].append(score)
+        else:  # 非英語對（如 zh-jp）
+            non_eng[resource].append(score)
+            if vlow_res is not None:
+                non_eng[vlow_res].append(score)
+            non_eng["all"].append(score)
+    avg_en_xx = defaultdict(int)
+    avg_xx_en = defaultdict(int)
+    avg_non_eng = defaultdict(int)
+    avg_all_pairs = defaultdict(int)
+    lists = [en_xx, xx_en, non_eng, all_pairs]
+    averages = [avg_en_xx, avg_xx_en, avg_non_eng, avg_all_pairs]
+    for idx, agg in enumerate(averages):
+        lst = lists[idx]
+        for resource in ["all", "high", "low", "v_low"]:
+            agg[resource] = round(sum(lst[resource]) / max(len(lst[resource]), 1), 2)
+    return {
+        "en-xx": avg_en_xx,
+        "xx-en": avg_xx_en,
+        "non-eng": avg_non_eng,
+        "all": avg_all_pairs,
+    }
+"""
+
+"""
+def get_type(pair):
+    if "-" not in pair:
+        return None
+    from examples.nllb.modeling.evaluation.train_example_count import flores200_public
+    from examples.nllb.modeling.evaluation.train_example_count.code_mapping import (
+        lang_code_map,
+    )
+
+    train_counts2 = flores200_public.train_counts
+    # High resource +1M, low resource 0-1M; Very low resource <0.1M
+    low_limits = {"high": 1000000, "low": 0, "v_low": 0}
+    high_limits = {"high": 10000000000, "low": 1000000, "v_low": 100000}
+    src, tgt = pair.split("-")
+    if src not in train_counts2 or tgt not in train_counts2:
+        if src in lang_code_map:
+            src = lang_code_map[src]
+        if tgt in lang_code_map:
+            tgt = lang_code_map[tgt]
+        if src not in train_counts2 or tgt not in train_counts2:
+            print(f"{src} or {tgt} is not in train_counts")
+            return None
+    count = min(train_counts2[src], train_counts2[tgt])  # 選擇兩語言中 資料較少者為主，代表模型訓練時 bottleneck 的限制是低資源語言。
+    resource = None
+    for t in low_limits.keys():
+        if count >= low_limits[t] and count <= high_limits[t]:
+            resource = t
+            break
+    vlow_res = None
+    if count >= low_limits["v_low"] and count <= high_limits["v_low"]:  # Very low-resource language pair
+        vlow_res = "v_low"
+
+    return resource, vlow_res
+"""
+
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +158,10 @@ def generate_results(direction, args):
     prep_cmd = ""
 
     if args.metric == "spbleu_flores101":
-        sacrebleu_cmd = "-tok spm"
+        sacrebleu_cmd = "-tok flores101"
     # TODO(vedanuj) : change once sacrebleu has spbleu spm versioning
     elif args.metric == "spbleu_flores200":
-        sacrebleu_cmd = "-tok spm"
+        sacrebleu_cmd = "-tok flores200"
     elif args.metric == "chrf":
         sacrebleu_cmd = "-m chrf"
     elif args.metric == "chrf++":
@@ -561,6 +689,44 @@ def get_directions(args):
     # Table 34
     elif args.corpus == "flores200_102":
         pass  # TODO
+    elif args.corpus == "flores200_23":
+        langs = [
+            "zho_Hant",
+            "zho_Hans",
+            "eng_Latn",
+            "jpn_Jpan",
+            "kor_Hang",
+            "nld_Latn",
+            "spa_Latn",
+            "ita_Latn",
+            "deu_Latn",
+            "por_Latn",
+            "pol_Latn",
+            "ces_Latn",
+            "fra_Latn",
+            "tur_Latn",
+            "dan_Latn",
+            "arb_Arab",
+            "hun_Latn",
+            "fin_Latn",
+            "ell_Grek",
+            "slk_Latn",
+            "slv_Latn",
+            "hrv_Latn",
+            "lvs_Latn",
+        ]
+        directions = list(itertools.combinations(langs, r=2))
+        rev_directions = [reversed(d) for d in directions]
+        return directions + rev_directions
+    elif args.corpus == "flores200_2":
+        langs = [
+            "zho_Hant",
+            "eng_Latn",
+        ]
+        directions = list(itertools.combinations(langs, r=2))
+        rev_directions = [reversed(d) for d in directions]
+        return directions + rev_directions
+
     # Table 54
     elif args.corpus == "flores200_206":
         langs = [
@@ -844,16 +1010,36 @@ def print_list(score_dict, directions):
 
 
 def aggregate_metrics(args):
+    # args = Namespace(
+    #     corpus='flores200',
+    #     translate_dir='flores_translations',
+    #     reference_dir='flores200_dataset',
+    #     pivot='eng_Latn',
+    #     metric='spbleu_flores200',
+    #     output_dir='output',
+    #     quiet=True,
+    #     average=False,
+    #     zero_shot=False,
+    #     supervised=False,
+    #     split='devtest')
     directions = get_directions(args)
+    # len(directions) = 40602
+    # directions[0] = ('ace_Arab', 'ace_Latn')
+    # directions[40601] = ('zul_Latn', 'xho_Latn')
     supervised_directions = Path(
         "examples/nllb/modeling/scripts/flores200/lang_pairs.txt"
     ).read_text()
     print(supervised_directions)
     supervised_directions = supervised_directions.split(",")
+    # len(supervised_directions) = 2440
+    # supervised_directions[0] = 'ace_Arab-eng_Latn'
+    # supervised_directions[2439] = 'zul_Latn-xho_Latn\n'
     score_dict = {}
     pivot_xx_directions = []
     for direction in tqdm.tqdm(directions):
         src, tgt = direction
+        # src = zul_Latn
+        # tgt = xho_Latn
         if args.zero_shot and args.supervised:
             raise ValueError("Cannot be both zero-shot and supervised.")
         if args.zero_shot and f"{src}-{tgt}" in supervised_directions:
@@ -861,16 +1047,64 @@ def aggregate_metrics(args):
         if args.supervised and f"{src}-{tgt}" not in supervised_directions:
             continue
         score_file = f"{args.output_dir}/{src}-{tgt}.{args.metric}"
+        # 'output/zul_Latn-zho_Hant.spbleu_flores200'
+
         command = f"grep 'score' {score_file} | head -1 | cut -f3 -d' ' | cut -f1 -d','"
+        # "grep 'score' output/zul_Latn-zho_Hant.spbleu_flores200 | head -1 | cut -f3 -d' ' | cut -f1 -d','"
+        """
+        (qwenomni) timmy.wan@alg3:~/translation/Open-NLLB$ more output/zul_Latn-zho_Hant.spbleu_flores200
+        {
+        "name": "BLEU",
+        "score": 9.3,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:flores200|smooth:exp|version:2.5.1",
+        "verbose_score": "48.3/23.3/12.5/7.0 (BP = 0.525 ratio = 0.608 hyp_len = 20003 ref_len = 32902)",
+        "nrefs": "1",
+        "case": "mixed",
+        "eff": "no",
+        "tok": "flores200",
+        "smooth": "exp",
+        "version": "2.5.1"
+        }
+        """
         value_str = subprocess.check_output(command, shell=True).decode()
+        # '9.3\n'
         value = round(float(value_str), 2) if len(value_str) > 0 else -1
+        # 9.3
         score_dict[f"{src}-{tgt}"] = value
         if src == args.pivot:
             pivot_xx_directions.append((src, tgt))
+    # len(score_dict) = 40602
+    # score_dict["zul_Latn-zho_Hant"] = 9.3
+    # len(pivot_xx_directions) = 201
+    # pivot_xx_directions[0] = ('eng_Latn', 'epo_Latn')
+    # pivot_xx_directions[1] = ('eng_Latn', 'est_Latn')
+    # pivot_xx_directions[200] = ('eng_Latn', 'ell_Grek')
 
     print(f"Metric :: {args.metric}")
+
+    # high_lang_pair_list = []
+    # for pair, score in score_dict.items():
+    #     resource, vlow_res = get_type(pair)
+    #     if resource == "high":
+    #         high_lang_pair_list.append(pair)
+    # left_list = []
+    # right_list = []
+    # for high_lang_pair in high_lang_pair_list:
+    #     left, right = high_lang_pair.split('-')
+    #     left_list.append(left)
+    #     right_list.append(right)
+    # high_lang_list = set(left_list+right_list)
+    # import pdb; pdb.set_trace()
     if args.average:
         print_averages(score_dict)
+        """
+        # 54B NLLB-200
+               en-xx  xx-en  non-eng    all
+        all    27.10  37.95    17.33  17.48
+        high   38.27  44.73    28.11  28.61
+        low    23.10  35.53    16.53  16.63
+        v_low  21.29  35.60    15.47  15.55
+        """
     else:
         if args.corpus == "autshumato":
             ordered_langs = [
@@ -916,6 +1150,19 @@ def aggregate_metrics(args):
 
 def main(args):
     directions = get_directions(args)
+    # len(directions) = 40602
+    # type(directions) = list
+    # directions[0] = ('ace_Arab', 'ace_Latn')
+    # type(directions[0]) = <class 'tuple'>
+    # type(directions[20300]) = <class 'tuple'>
+    # directions[20300] = ('zho_Hant', 'zul_Latn')
+    # type(directions[20301]) = <class 'reversed'>
+    # tuple(directions[20301]) = ('ace_Latn', 'ace_Arab')
+    # type(directions[40601]) = <class 'reversed'>
+    # tuple(directions[40601]) = ('zul_Latn', 'zho_Hant')
+
+
+
     _ = Parallel(n_jobs=32)(
         delayed(generate_results)(direction, args)
         for direction in tqdm.tqdm(directions)
@@ -926,17 +1173,17 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--corpus", default=None)
-    parser.add_argument("--translate-dir", default=None)
-    parser.add_argument("--reference-dir", default=None)
+    parser.add_argument("--corpus", default=None)  # flores200
+    parser.add_argument("--translate-dir", default=None)  # flores_translations
+    parser.add_argument("--reference-dir", default=None)  # flores200_dataset
     parser.add_argument("--pivot", default="eng_Latn")
 
-    parser.add_argument("--metric", default="chrf")
-    parser.add_argument("--output-dir", default=None)
-    parser.add_argument("--quiet", default=True)
-    parser.add_argument("--average", action="store_true")
-    parser.add_argument("--zero-shot", action="store_true")
-    parser.add_argument("--supervised", action="store_true")
+    parser.add_argument("--metric", default="chrf")  # spbleu_flores200
+    parser.add_argument("--output-dir", default=None)  # output
+    parser.add_argument("--quiet", default=True)  # True
+    parser.add_argument("--average", action="store_true")  # False
+    parser.add_argument("--zero-shot", action="store_true")  # False
+    parser.add_argument("--supervised", action="store_true")  # False
 
     args = parser.parse_args()
 
@@ -945,4 +1192,30 @@ if __name__ == "__main__":
     args.split = "devtest" if "flores" in args.corpus else "test"
     if args.corpus == "floresv1":
         args.split = "test"
+    # aggregate_metrics(args)
     main(args)
+
+"""
+python calculate_metrics.py \
+    --corpus flores200 \
+    --translate-dir flores_translations \
+    --reference-dir flores200_dataset \
+    --metric spbleu_flores200 --output-dir "output"
+
+
+
+# rename flores200 devtest
+mv flores200_dataset/devtest flores200_dataset/flores200
+
+# install required library
+pip install stopes
+pip install hydra-core
+pip install sacrebleu
+
+PYTHONPATH=. python examples/nllb/evaluation/calculate_metrics.py \
+    --corpus flores200 \
+    --translate-dir flores_translations \
+    --reference-dir flores200_dataset \
+    --metric spbleu_flores200 \
+    --output-dir output
+"""
