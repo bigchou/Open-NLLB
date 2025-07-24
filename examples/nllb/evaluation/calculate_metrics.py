@@ -726,6 +726,15 @@ def get_directions(args):
         directions = list(itertools.combinations(langs, r=2))
         rev_directions = [reversed(d) for d in directions]
         return directions + rev_directions
+    elif args.corpus == "flores200_3":
+        langs = [
+            "zho_Hant",
+            "zho_Hans",
+            "eng_Latn",
+        ]
+        directions = list(itertools.combinations(langs, r=2))
+        rev_directions = [reversed(d) for d in directions]
+        return directions + rev_directions
 
     # Table 54
     elif args.corpus == "flores200_206":
@@ -987,6 +996,8 @@ def print_pivot_centric(score_dict, pivot_xx_directions):
             ],
         }
     )
+    print(scores.iloc[:, 1:3].mean(axis=0).to_string(index=True))
+    print("-------------------------------------------")
     print(scores.to_string(index=False))
 
 
