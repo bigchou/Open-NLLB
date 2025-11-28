@@ -721,7 +721,7 @@ def get_directions(args):
     elif args.corpus == "flores200_2":
         langs = [
             "zho_Hant",
-            "eng_Latn",
+            "zho_Hans",
         ]
         directions = list(itertools.combinations(langs, r=2))
         rev_directions = [reversed(d) for d in directions]
@@ -731,6 +731,17 @@ def get_directions(args):
             "zho_Hant",
             "zho_Hans",
             "eng_Latn",
+        ]
+        directions = list(itertools.combinations(langs, r=2))
+        rev_directions = [reversed(d) for d in directions]
+        return directions + rev_directions
+    elif args.corpus == "flores200_5":
+        langs = [
+            "zho_Hant",
+            "zho_Hans",
+            "ind_Latn",
+            "vie_Latn",
+            "tha_Thai",
         ]
         directions = list(itertools.combinations(langs, r=2))
         rev_directions = [reversed(d) for d in directions]
